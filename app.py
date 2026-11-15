@@ -80,7 +80,7 @@ st.markdown("""
     </div>
 """, unsafe_allow_html=True)
 
-# Secure API Key Loading (From Environment Variables or Streamlit Secrets)
+# Secure API Key Loading
 OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "")
 if not OPENROUTER_API_KEY:
     try:
@@ -89,7 +89,7 @@ if not OPENROUTER_API_KEY:
         pass
 
 # Dynamic Scraper for Categories and Articles
-@st.cache_data(ttl=900)
+@st.cache_data(ttl=600)
 def fetch_fully_dynamic_ig_data():
     base_category_links = [
         "https://www.ig.ca/en/insights/your-financial-life/tax",
@@ -115,14 +115,15 @@ def fetch_fully_dynamic_ig_data():
             resp = requests.get(cat_url, headers=headers, timeout=6)
             if resp.status_code == 200:
                 soup = BeautifulSoup(resp.text, 'html.parser')
+                seen_titles = set()
                 for a_tag in soup.find_all('a', href=True):
                     href = a_tag['href']
                     title = a_tag.get_text().strip()
                     if '/insights/' in href and len(title) > 15:
                         full_url = href if href.startswith('http') else f"https://www.ig.ca{href}"
-                        article_item = {"title": title, "url": full_url}
-                        if article_item not in dynamic_data[cat_name]["articles"]:
-                            dynamic_data[cat_name]["articles"].append(article_item)
+                        if title not in seen_titles:
+                            seen_titles.add(title)
+                            dynamic_data[cat_name]["articles"].append({"title": title, "url": full_url})
         except Exception:
             continue
             
@@ -216,18 +217,17 @@ with p_col1:
     )
 
 with p_col2:
-    category_articles = list(ig_master_data[selected_category]["articles"])
-    if len(category_articles) > 4:
-        random.shuffle(category_articles)
-        display_articles = category_articles[:6]
-    else:
-        display_articles = category_articles
-
-    article_titles = [art["title"] for art in display_articles]
-    article_url_map = {art["title"]: art["url"] for art in display_articles}
+    category_articles = ig_master_data[selected_category]["articles"]
+    
+    # Map title to exact article dictionary to prevent index mixing
+    article_dict = {art["title"]: art for art in category_articles}
+    article_titles = list(article_dict.keys())
 
     selected_article_title = st.selectbox("Official Article Topic", article_titles)
-    exact_source_url = article_url_map.get(selected_article_title, ig_master_data[selected_category]["url"])
+    
+    # Exact lookup based on selected title
+    selected_article_obj = article_dict.get(selected_article_title, {"title": selected_article_title, "url": ig_master_data[selected_category]["url"]})
+    exact_source_url = selected_article_obj["url"]
 
 random_seed = random.randint(1, 100)
 
@@ -260,7 +260,7 @@ if st.button("Generate Campaign", type="primary"):
         st.warning("Please select at least one social media platform.")
     else:
         try:
-            with st.spinner("Processing live article and crafting professional posts..."):
+            with st.spinner(f"Scraping '{selected_article_title}' and crafting professional posts..."):
                 headers = {
                     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
                 }
@@ -293,13 +293,13 @@ if st.button("Generate Campaign", type="primary"):
                 Write unique, highly engaging, natural-sounding social media posts specifically for these requested platforms: {', '.join(platforms)}.
                 
                 Official Source Article Title: {selected_article_title}
-                Source Context: {article_text[:2000]}
+                Source Context: {article_text[:2500]}
                 Tone: {writing_tone}
                 Emoji Usage: {emoji_level}
                 Variation Seed: {random_seed}
                 
                 STRICT RULES:
-                - Write like a real human expert sharing insights with depth and empathy. Absolutely no robotic AI phrases.
+                - Write like a real human expert sharing insights with depth and empathy based strictly on the article title '{selected_article_title}'. Absolutely no robotic AI phrases.
                 - DO NOT include ANY links, URLs, or markdown links inside the post text.
                 - DO NOT include ANY Call to Action (CTA) like "Click here", "Call me", or "Visit our website".
                 - Add clean, relevant financial/lifestyle hashtags at the very bottom of each post.
