@@ -421,6 +421,45 @@ def enforce_max_chars(text, max_chars):
             return truncated[:end_idx].strip()
     return truncated.strip()
 
+# Smart API caller with automatic fallback to free models if credits run low
+def call_openrouter_with_fallback(api_key, prompt_text):
+    headers = {
+        "Authorization": f"Bearer {api_key.strip()}",
+        "Content-Type": "application/json",
+        "HTTP-Referer": "https://ig-content-studio.onrender.com",
+        "X-Title": "IG Advisor Content Studio"
+    }
+    
+    # Primary fast model (low token footprint) -> Backup free router model
+    models_to_try = [
+        {"model": "google/gemini-2.5-flash", "max_tokens": 1800},
+        {"model": "openrouter/free", "max_tokens": 2200}
+    ]
+    
+    last_error = ""
+    for config in models_to_try:
+        payload = {
+            "model": config["model"],
+            "messages": [{"role": "user", "content": prompt_text}],
+            "max_tokens": config["max_tokens"]
+        }
+        resp = requests.post(
+            "https://openrouter.ai/api/v1/chat/completions",
+            headers=headers,
+            data=json.dumps(payload),
+            timeout=45
+        )
+        if resp.status_code == 200:
+            return resp.json(), config["model"], None
+        elif resp.status_code == 402:
+            # Credit limit hit on paid model -> automatically fall back to openrouter/free
+            last_error = f"({resp.status_code}): {resp.text}"
+            continue
+        else:
+            return None, config["model"], f"API Error ({resp.status_code}): {resp.text}"
+            
+    return None, None, f"API Error {last_error}"
+
 # Generation Trigger with button label "Create Content"
 if st.button("Create Content", type="primary"):
     if not OPENROUTER_API_KEY:
@@ -477,7 +516,7 @@ if st.button("Create Content", type="primary"):
 
                 Official Source Article Title: {selected_article_title}
                 Original Article Content:
-                {article_text[:3000]}
+                {article_text[:2200]}
 
                 Selected Writing Tone: {writing_tone}
                 Tone Instructions: {tone_guidance}
@@ -508,30 +547,12 @@ if st.button("Create Content", type="primary"):
                 [content]
                 """
 
-                # Kept safely within current OpenRouter credit allowance (max_tokens=2800)
-                payload = {
-                    "model": "google/gemini-2.5-flash",
-                    "messages": [{"role": "user", "content": prompt}],
-                    "max_tokens": 2800
-                }
+                res_data, used_model, err_msg = call_openrouter_with_fallback(OPENROUTER_API_KEY, prompt)
 
-                api_response = requests.post(
-                    "https://openrouter.ai/api/v1/chat/completions",
-                    headers={
-                        "Authorization": f"Bearer {OPENROUTER_API_KEY.strip()}",
-                        "Content-Type": "application/json",
-                        "HTTP-Referer": "https://ig-content-studio.onrender.com",
-                        "X-Title": "IG Advisor Content Studio"
-                    },
-                    data=json.dumps(payload),
-                    timeout=45
-                )
-
-                if api_response.status_code == 200:
-                    res_data = api_response.json()
+                if res_data:
                     generated_output = res_data['choices'][0]['message']['content']
 
-                    st.success("Content created successfully.")
+                    st.success(f"Content created successfully (Engine: {used_model}).")
                     
                     with st.container(border=True):
                         st.markdown("### Official Source Reference")
@@ -575,7 +596,7 @@ if st.button("Create Content", type="primary"):
                                 with st.expander("Exact Raw Text View"):
                                     st.text(plat_content)
                 else:
-                    st.error(f"API Error ({api_response.status_code}): {api_response.text}")
+                    st.error(err_msg)
 
         except Exception as e:
             st.error(f"An error occurred: {e}")
