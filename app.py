@@ -1,4 +1,5 @@
 import streamlit as st
+import streamlit.components.v1 as components
 import requests
 from bs4 import BeautifulSoup
 import json
@@ -87,6 +88,72 @@ if not OPENROUTER_API_KEY:
         OPENROUTER_API_KEY = st.secrets.get("OPENROUTER_API_KEY", "")
     except Exception:
         pass
+
+# Exact verbatim clipboard copy button component
+def render_exact_copy_button(text_to_copy, button_key):
+    safe_json_text = json.dumps(text_to_copy)
+    html_code = f"""
+    <div style="display: flex; align-items: center; gap: 10px; margin: 6px 0;">
+        <button id="btn_{button_key}" onclick="copyExact_{button_key}()" style="
+            background-color: #0f172a;
+            color: #ffffff;
+            border: none;
+            border-radius: 8px;
+            padding: 10px 16px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            width: 100%;
+            height: 44px;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            transition: background-color 0.2s ease;
+        ">Copy Exact Content</button>
+    </div>
+    <script>
+        function copyExact_{button_key}() {{
+            const exactText = {safe_json_text};
+            const btn = document.getElementById("btn_{button_key}");
+            if (navigator.clipboard && navigator.clipboard.writeText) {{
+                navigator.clipboard.writeText(exactText).then(() => {{
+                    const prev = btn.innerText;
+                    btn.innerText = "Copied Exact Content";
+                    btn.style.backgroundColor = "#15803d";
+                    setTimeout(() => {{
+                        btn.innerText = prev;
+                        btn.style.backgroundColor = "#0f172a";
+                    }}, 1800);
+                }}).catch(() => {{
+                    fallbackCopy_{button_key}(exactText, btn);
+                }});
+            }} else {{
+                fallbackCopy_{button_key}(exactText, btn);
+            }}
+        }}
+        function fallbackCopy_{button_key}(text, btn) {{
+            const ta = document.createElement("textarea");
+            ta.value = text;
+            ta.setAttribute("readonly", "");
+            ta.style.position = "fixed";
+            ta.style.opacity = "0";
+            document.body.appendChild(ta);
+            ta.select();
+            try {{
+                document.execCommand("copy");
+                const prev = btn.innerText;
+                btn.innerText = "Copied Exact Content";
+                btn.style.backgroundColor = "#15803d";
+                setTimeout(() => {{
+                    btn.innerText = prev;
+                    btn.style.backgroundColor = "#0f172a";
+                }}, 1800);
+            }} catch (e) {{
+                btn.innerText = "Copy Failed";
+            }}
+            document.body.removeChild(ta);
+        }}
+    </script>
+    """
+    components.html(html_code, height=58)
 
 # Helper to pick clean image without logo/branding keywords
 def find_clean_plain_image(soup, base_url="https://www.ig.ca"):
@@ -481,6 +548,9 @@ if st.button("Create Content", type="primary"):
                                 st.divider()
                                 st.markdown(plat_content)
                             
+                            # Exact verbatim copy button + download + quick raw view
+                            render_exact_copy_button(plat_content, f"{plat}_{i}_{random_seed}")
+
                             col_dl, col_cp = st.columns([1, 2])
                             with col_dl:
                                 st.download_button(
@@ -488,11 +558,11 @@ if st.button("Create Content", type="primary"):
                                     data=plat_content,
                                     file_name=f"IG_{plat}_{selected_category.replace(' ', '_')}.txt",
                                     mime="text/plain",
-                                    key=f"dl_{plat}"
+                                    key=f"dl_{plat}_{i}_{random_seed}"
                                 )
                             with col_cp:
-                                with st.expander("Quick Copy View"):
-                                    st.code(plat_content, language="text")
+                                with st.expander("Exact Raw Text View"):
+                                    st.text(plat_content)
                 else:
                     st.error(f"API Error ({api_response.status_code}): {api_response.text}")
 
