@@ -413,7 +413,6 @@ def enforce_max_chars(text, max_chars):
                 return candidate
         return truncated.strip()
 
-    # For 2500-char posts, trim cleanly at a paragraph, sentence, or space boundary
     truncated = text[:max_chars]
     for delimiter in ["\n\n", "\n", ". ", "? ", "! ", " "]:
         idx = truncated.rfind(delimiter)
@@ -478,7 +477,7 @@ if st.button("Create Content", type="primary"):
 
                 Official Source Article Title: {selected_article_title}
                 Original Article Content:
-                {article_text[:4500]}
+                {article_text[:3000]}
 
                 Selected Writing Tone: {writing_tone}
                 Tone Instructions: {tone_guidance}
@@ -509,10 +508,11 @@ if st.button("Create Content", type="primary"):
                 [content]
                 """
 
+                # Kept safely within current OpenRouter credit allowance (max_tokens=2800)
                 payload = {
                     "model": "google/gemini-2.5-flash",
                     "messages": [{"role": "user", "content": prompt}],
-                    "max_tokens": 4500
+                    "max_tokens": 2800
                 }
 
                 api_response = requests.post(
