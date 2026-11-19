@@ -110,7 +110,6 @@ def find_clean_plain_image(soup, base_url="https://www.ig.ca"):
         if any(bad in combined_check for bad in blocked_keywords):
             continue
 
-        # Prefer larger/editorial article images
         width_attr = img.get("width")
         height_attr = img.get("height")
         score = 0
@@ -244,7 +243,7 @@ def fetch_fully_dynamic_ig_data():
 
 ig_master_data = fetch_fully_dynamic_ig_data()
 
-# Clean Inline Inputs (Emoji Level removed)
+# Clean Inline Inputs
 st.markdown("### Configuration & Topic Selection")
 c_col1, c_col2 = st.columns(2, gap="medium")
 
@@ -256,6 +255,7 @@ with c_col2:
     writing_tone = st.selectbox(
         "Writing Tone",
         [
+            "Advisor Speaking",
             "Hook & Question Driven",
             "Professional & Empathetic",
             "Conversational & Human",
@@ -315,7 +315,7 @@ def enforce_short_platform_limit(text, max_chars=100):
         return cleaned
     return cleaned[:max_chars].rstrip()
 
-# Generation Trigger with updated button label "Create Content"
+# Generation Trigger with button label "Create Content"
 if st.button("Create Content", type="primary"):
     if not OPENROUTER_API_KEY:
         st.error("API Key missing! Please configure your OpenRouter API Key in environment variables.")
@@ -335,7 +335,7 @@ if st.button("Create Content", type="primary"):
                     if resp.status_code == 200:
                         soup = BeautifulSoup(resp.text, 'html.parser')
                         paragraphs = soup.find_all('p')
-                        article_text = " ".join([p.text for p in paragraphs])
+                        article_text = "\n\n".join([p.get_text(" ", strip=True) for p in paragraphs if p.get_text(strip=True)])
                         banner_image_url = find_clean_plain_image(soup)
                 except Exception:
                     pass
@@ -343,28 +343,53 @@ if st.button("Create Content", type="primary"):
                 if not article_text.strip():
                     article_text = f"Official IG Insights article titled '{selected_article_title}' under {selected_category} category."
 
-                tone_instruction = (
-                    "Start every post with a compelling hook and a thought-provoking question that pulls the reader into the rest of the post. Sound 100% like a real human advisor."
-                    if writing_tone == "Hook & Question Driven"
-                    else f"Write in a {writing_tone} tone that sounds genuinely human, natural, and relatable."
-                )
+                tone_map = {
+                    "Advisor Speaking": (
+                        "Speak directly like a real financial advisor giving a live talk or sitting across the table with a client. "
+                        "Use natural spoken cadence, clear guidance, real-world perspective, and warm authority while staying grounded in the source article."
+                    ),
+                    "Hook & Question Driven": (
+                        "Open with an arresting hook and a sharp question that pulls the reader into the full piece, "
+                        "followed by natural, human-sounding breakdown of the article's core points."
+                    ),
+                    "Professional & Empathetic": (
+                        "Write with calm expertise and genuine empathy for everyday financial decisions, using clear human prose."
+                    ),
+                    "Conversational & Human": (
+                        "Write as a thoughtful, relatable human sharing practical insights naturally without stiff jargon."
+                    ),
+                    "Thought Leadership": (
+                        "Write with clear strategic perspective and nuanced insights drawn directly from the source article."
+                    )
+                }
+
+                tone_guidance = tone_map.get(writing_tone, tone_map["Advisor Speaking"])
 
                 prompt = f"""
-                You are an experienced human financial advisor writing directly to everyday readers on social media.
-                Create posts strictly for these platforms: {', '.join(platforms)}.
+                You are an experienced human financial advisor creating social media content based strictly on the original source article below.
+                Requested platforms: {', '.join(platforms)}.
 
                 Official Source Article Title: {selected_article_title}
-                Source Context: {article_text[:2500]}
-                Tone Style: {writing_tone}
-                Tone Guidance: {tone_instruction}
+                Original Article Content:
+                {article_text[:4500]}
+
+                Selected Writing Tone: {writing_tone}
+                Tone Instructions: {tone_guidance}
                 Variation Seed: {random_seed}
 
-                STRICT RULES:
-                1. ZERO EMOJIS anywhere in any post. Do not use any emoji characters or pictographs.
-                2. Write like a real human expert with natural rhythm, empathy, and clarity. Avoid robotic AI cliches.
-                3. For LinkedIn, Facebook, and Instagram: write engaging, well-spaced posts with clean relevant hashtags at the bottom. Do NOT include URLs, links, or pushy sales CTAs.
-                4. For TikTok and Twitter: the ENTIRE post including hashtags MUST be strictly 100 characters or fewer (<= 100 characters). Include a sharp hook/question and relevant hashtags while staying strictly under 100 characters total.
-                5. Separate each requested platform clearly using exact markdown headings:
+                MANDATORY RULES FOR EVERY RESPONSE:
+                1. ZERO EMOJIS anywhere in any platform's post. Never use emojis or pictographs.
+                2. EVERY post across ALL selected tones MUST open with a powerful hook (a strong opening line or question) that makes the reader want to read the entire post.
+                3. Sound 100% like a real human writer—natural phrasing, smooth transitions, zero robotic AI filler.
+                4. For LinkedIn, Facebook, and Instagram:
+                   - Keep the length substantial and rich like the original article—do NOT shrink it into a brief summary.
+                   - Base the main body directly on the facts, ideas, and takeaways in the original article content above.
+                   - Include important sub-topics, clear paragraphs, and clean bullet points covering key details from the article so the reader gets full value.
+                   - End with relevant hashtags. Do NOT include URLs, links, or pushy sales CTAs.
+                5. For TikTok and Twitter:
+                   - The ENTIRE post including hashtags MUST be 100 characters or fewer (less than or equal to 100 characters).
+                   - Include a strong hook and relevant hashtags within that strict limit.
+                6. Separate each requested platform clearly using exact markdown headings:
                 ### LinkedIn
                 [content]
                 ### Facebook
@@ -380,7 +405,7 @@ if st.button("Create Content", type="primary"):
                 payload = {
                     "model": "google/gemini-2.5-flash",
                     "messages": [{"role": "user", "content": prompt}],
-                    "max_tokens": 2500
+                    "max_tokens": 4000
                 }
 
                 api_response = requests.post(
@@ -392,7 +417,7 @@ if st.button("Create Content", type="primary"):
                         "X-Title": "IG Advisor Content Studio"
                     },
                     data=json.dumps(payload),
-                    timeout=30
+                    timeout=45
                 )
 
                 if api_response.status_code == 200:
@@ -401,7 +426,6 @@ if st.button("Create Content", type="primary"):
 
                     st.success("Content created successfully.")
                     
-                    # Source Reference Card
                     with st.container(border=True):
                         st.markdown("### Official Source Reference")
                         st.markdown(f"**Source Article:** [{selected_article_title}]({exact_source_url})")
