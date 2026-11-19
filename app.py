@@ -88,6 +88,57 @@ if not OPENROUTER_API_KEY:
     except Exception:
         pass
 
+# Helper to pick clean image without logo/branding keywords
+def find_clean_plain_image(soup, base_url="https://www.ig.ca"):
+    blocked_keywords = [
+        "logo", "brand", "icon", "sprite", "avatar", "favicon",
+        "header", "footer", "badge", "button", "arrow", "ig-logo", "investors-group"
+    ]
+    candidates = []
+
+    for img in soup.find_all("img"):
+        src = (img.get("src") or img.get("data-src") or "").strip()
+        alt = (img.get("alt") or "").lower()
+        cls = " ".join(img.get("class") or []).lower()
+
+        if not src or src.startswith("data:") or ".svg" in src.lower():
+            continue
+
+        full_src = src if src.startswith("http") else f"{base_url}{src if src.startswith('/') else '/' + src}"
+        combined_check = f"{full_src.lower()} {alt} {cls}"
+
+        if any(bad in combined_check for bad in blocked_keywords):
+            continue
+
+        # Prefer larger/editorial article images
+        width_attr = img.get("width")
+        height_attr = img.get("height")
+        score = 0
+        try:
+            if width_attr and int(str(width_attr).replace("px", "")) >= 300:
+                score += 2
+            if height_attr and int(str(height_attr).replace("px", "")) >= 200:
+                score += 2
+        except Exception:
+            pass
+
+        if any(good in full_src.lower() for good in ["insight", "article", "editorial", "hero", "banner", "media", "content"]):
+            score += 3
+
+        candidates.append((score, full_src))
+
+    if candidates:
+        candidates.sort(key=lambda x: x[0], reverse=True)
+        return candidates[0][1]
+
+    og_img = soup.find("meta", property="og:image")
+    if og_img and og_img.get("content"):
+        og_url = og_img["content"].strip()
+        if not any(bad in og_url.lower() for bad in blocked_keywords):
+            return og_url
+
+    return ""
+
 # Dynamic Scraper for Categories and Articles
 @st.cache_data(ttl=600)
 def fetch_fully_dynamic_ig_data():
@@ -193,40 +244,44 @@ def fetch_fully_dynamic_ig_data():
 
 ig_master_data = fetch_fully_dynamic_ig_data()
 
-# Clean Inline Inputs
+# Clean Inline Inputs (Emoji Level removed)
 st.markdown("### Configuration & Topic Selection")
-c_col1, c_col2, c_col3 = st.columns(3, gap="medium")
+c_col1, c_col2 = st.columns(2, gap="medium")
 
 with c_col1:
     category_names = list(ig_master_data.keys())
     selected_category = st.selectbox("Category", category_names)
 
 with c_col2:
-    writing_tone = st.selectbox("Writing Tone", ["Professional & Empathetic", "Conversational & Human", "Thought Leadership"])
-
-with c_col3:
-    emoji_level = st.selectbox("Emoji Level", ["Balanced", "Minimal", "High"])
+    writing_tone = st.selectbox(
+        "Writing Tone",
+        [
+            "Hook & Question Driven",
+            "Professional & Empathetic",
+            "Conversational & Human",
+            "Thought Leadership"
+        ]
+    )
 
 p_col1, p_col2 = st.columns(2, gap="medium")
 
 with p_col1:
     platforms = st.multiselect(
         "Target Platforms",
-        ["LinkedIn", "Facebook", "Instagram"],
-        default=["LinkedIn", "Facebook", "Instagram"]
+        ["LinkedIn", "Facebook", "Instagram", "TikTok", "Twitter"],
+        default=["LinkedIn", "Facebook", "Instagram", "TikTok", "Twitter"]
     )
 
 with p_col2:
     category_articles = ig_master_data[selected_category]["articles"]
-    
-    # Map title to exact article dictionary to prevent index mixing
     article_dict = {art["title"]: art for art in category_articles}
     article_titles = list(article_dict.keys())
 
     selected_article_title = st.selectbox("Official Article Topic", article_titles)
-    
-    # Exact lookup based on selected title
-    selected_article_obj = article_dict.get(selected_article_title, {"title": selected_article_title, "url": ig_master_data[selected_category]["url"]})
+    selected_article_obj = article_dict.get(
+        selected_article_title,
+        {"title": selected_article_title, "url": ig_master_data[selected_category]["url"]}
+    )
     exact_source_url = selected_article_obj["url"]
 
 random_seed = random.randint(1, 100)
@@ -238,29 +293,37 @@ def extract_platform_content(full_text, platform_name):
     lines = full_text.split('\n')
     extracted = []
     recording = False
-    
+    known_headers = ["### LinkedIn", "### Facebook", "### Instagram", "### TikTok", "### Twitter"]
+
     for line in lines:
         clean_line = line.strip()
-        if f"### {platform_name}" in clean_line or f"**{platform_name}**" in clean_line or f"[{platform_name}]" in clean_line:
+        if clean_line.lower() == f"### {platform_name}".lower() or clean_line.lower() == f"**{platform_name}**".lower() or clean_line.lower() == f"[{platform_name}]".lower():
             recording = True
             continue
-        elif recording and clean_line.startswith("### "):
+        elif recording and any(clean_line.lower().startswith(h.lower()) for h in known_headers):
             break
         elif recording:
             extracted.append(line)
-            
+
     result = "\n".join(extracted).strip()
     return result if result else full_text
 
-# Generation Trigger
-if st.button("Generate Campaign", type="primary"):
+# Enforce strict <= 100 char limit for TikTok and Twitter
+def enforce_short_platform_limit(text, max_chars=100):
+    cleaned = " ".join(text.split()).strip()
+    if len(cleaned) <= max_chars:
+        return cleaned
+    return cleaned[:max_chars].rstrip()
+
+# Generation Trigger with updated button label "Create Content"
+if st.button("Create Content", type="primary"):
     if not OPENROUTER_API_KEY:
         st.error("API Key missing! Please configure your OpenRouter API Key in environment variables.")
     elif not platforms:
         st.warning("Please select at least one social media platform.")
     else:
         try:
-            with st.spinner(f"Scraping '{selected_article_title}' and crafting professional posts..."):
+            with st.spinner(f"Processing '{selected_article_title}' and crafting human posts..."):
                 headers = {
                     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
                 }
@@ -273,44 +336,45 @@ if st.button("Generate Campaign", type="primary"):
                         soup = BeautifulSoup(resp.text, 'html.parser')
                         paragraphs = soup.find_all('p')
                         article_text = " ".join([p.text for p in paragraphs])
-                        
-                        og_img = soup.find('meta', property='og:image')
-                        if og_img and og_img.get('content'):
-                            banner_image_url = og_img['content']
-                        else:
-                            g_img = soup.find('img')
-                            if g_img and g_img.get('src'):
-                                src = g_img['src']
-                                banner_image_url = src if src.startswith('http') else f"https://www.ig.ca{src}"
+                        banner_image_url = find_clean_plain_image(soup)
                 except Exception:
                     pass
 
                 if not article_text.strip():
                     article_text = f"Official IG Insights article titled '{selected_article_title}' under {selected_category} category."
 
+                tone_instruction = (
+                    "Start every post with a compelling hook and a thought-provoking question that pulls the reader into the rest of the post. Sound 100% like a real human advisor."
+                    if writing_tone == "Hook & Question Driven"
+                    else f"Write in a {writing_tone} tone that sounds genuinely human, natural, and relatable."
+                )
+
                 prompt = f"""
-                You are an expert human financial advisor writing directly to clients on social media.
-                Write unique, highly engaging, natural-sounding social media posts specifically for these requested platforms: {', '.join(platforms)}.
-                
+                You are an experienced human financial advisor writing directly to everyday readers on social media.
+                Create posts strictly for these platforms: {', '.join(platforms)}.
+
                 Official Source Article Title: {selected_article_title}
                 Source Context: {article_text[:2500]}
-                Tone: {writing_tone}
-                Emoji Usage: {emoji_level}
+                Tone Style: {writing_tone}
+                Tone Guidance: {tone_instruction}
                 Variation Seed: {random_seed}
-                
+
                 STRICT RULES:
-                - Write like a real human expert sharing insights with depth and empathy based strictly on the article title '{selected_article_title}'. Absolutely no robotic AI phrases.
-                - DO NOT include ANY links, URLs, or markdown links inside the post text.
-                - DO NOT include ANY Call to Action (CTA) like "Click here", "Call me", or "Visit our website".
-                - Add clean, relevant financial/lifestyle hashtags at the very bottom of each post.
-                - Use clear paragraph spacing and bullet points where helpful.
-                - You MUST separate each platform's content clearly using exact headers:
+                1. ZERO EMOJIS anywhere in any post. Do not use any emoji characters or pictographs.
+                2. Write like a real human expert with natural rhythm, empathy, and clarity. Avoid robotic AI cliches.
+                3. For LinkedIn, Facebook, and Instagram: write engaging, well-spaced posts with clean relevant hashtags at the bottom. Do NOT include URLs, links, or pushy sales CTAs.
+                4. For TikTok and Twitter: the ENTIRE post including hashtags MUST be strictly 100 characters or fewer (<= 100 characters). Include a sharp hook/question and relevant hashtags while staying strictly under 100 characters total.
+                5. Separate each requested platform clearly using exact markdown headings:
                 ### LinkedIn
-                [LinkedIn Post Content]
+                [content]
                 ### Facebook
-                [Facebook Post Content]
+                [content]
                 ### Instagram
-                [Instagram Post Content]
+                [content]
+                ### TikTok
+                [content]
+                ### Twitter
+                [content]
                 """
 
                 payload = {
@@ -335,26 +399,29 @@ if st.button("Generate Campaign", type="primary"):
                     res_data = api_response.json()
                     generated_output = res_data['choices'][0]['message']['content']
 
-                    st.success("Campaign generated successfully.")
+                    st.success("Content created successfully.")
                     
                     # Source Reference Card
                     with st.container(border=True):
                         st.markdown("### Official Source Reference")
                         st.markdown(f"**Source Article:** [{selected_article_title}]({exact_source_url})")
                         if banner_image_url:
-                            st.image(banner_image_url, width=300, caption="IG Banner Asset")
+                            st.image(banner_image_url, width=300, caption="Clean Article Visual")
 
                     st.markdown("### Generated Platform Content")
                     
-                    # Render Separate Tabs per Platform inside Clean Native Bordered Containers
                     tabs = st.tabs([f"{p}" for p in platforms])
                     
                     for i, plat in enumerate(platforms):
                         with tabs[i]:
                             plat_content = extract_platform_content(generated_output, plat)
+                            if plat in ["TikTok", "Twitter"]:
+                                plat_content = enforce_short_platform_limit(plat_content, max_chars=100)
                             
                             with st.container(border=True):
-                                st.markdown(f"#### {plat} Professional Post")
+                                st.markdown(f"#### {plat} Post")
+                                if plat in ["TikTok", "Twitter"]:
+                                    st.caption(f"Character count: {len(plat_content)} / 100")
                                 st.divider()
                                 st.markdown(plat_content)
                             
