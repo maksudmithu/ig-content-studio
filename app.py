@@ -397,17 +397,29 @@ def format_hook_first_line(text):
 
     return cleaned
 
-# Enforce strict <= 100 char limit for TikTok and Twitter while keeping complete thoughts
-def enforce_short_platform_limit(text, max_chars=100):
-    cleaned = " ".join(text.split()).strip()
-    if len(cleaned) <= max_chars:
-        return cleaned
+# Enforce strict max character cap while keeping complete words/sentences cleanly
+def enforce_max_chars(text, max_chars):
+    if len(text) <= max_chars:
+        return text.strip()
 
-    truncated = cleaned[:max_chars]
-    if " " in truncated:
-        candidate = truncated.rsplit(" ", 1)[0].strip()
-        if candidate:
-            return candidate
+    if max_chars <= 100:
+        cleaned = " ".join(text.split()).strip()
+        if len(cleaned) <= max_chars:
+            return cleaned
+        truncated = cleaned[:max_chars]
+        if " " in truncated:
+            candidate = truncated.rsplit(" ", 1)[0].strip()
+            if candidate:
+                return candidate
+        return truncated.strip()
+
+    # For 2500-char posts, trim cleanly at a paragraph, sentence, or space boundary
+    truncated = text[:max_chars]
+    for delimiter in ["\n\n", "\n", ". ", "? ", "! ", " "]:
+        idx = truncated.rfind(delimiter)
+        if idx > int(max_chars * 0.7):
+            end_idx = idx + len(delimiter) if delimiter in [". ", "? ", "! "] else idx
+            return truncated[:end_idx].strip()
     return truncated.strip()
 
 # Generation Trigger with button label "Create Content"
@@ -479,13 +491,11 @@ if st.button("Create Content", type="primary"):
                 4. Keep line 1 strictly by itself with NO body text on line 1, followed by a blank newline before the body starts on the next line.
                 5. Sound 100% like a real human writer—natural phrasing, smooth transitions, zero robotic AI filler.
                 6. For LinkedIn, Facebook, and Instagram:
-                   - Keep the length substantial and rich like the original article—do NOT shrink it into a brief summary.
-                   - Base the main body directly on the facts, ideas, and takeaways in the original article content above.
-                   - Include important sub-topics, clear paragraphs, and clean bullet points covering key details from the article so the reader gets full value.
-                   - End with relevant hashtags. Do NOT include URLs, links, or pushy sales CTAs.
+                   - Keep each post complete and strictly AT MOST 2500 characters (less than or equal to 2500 characters) including hashtags.
+                   - Make it substantial, thorough, and grounded in the facts, ideas, and takeaways of the original article above.
+                   - Include important points, clear paragraphs, bullet points, and relevant hashtags at the end, finishing cleanly within 2500 characters. Do NOT include URLs, links, or pushy sales CTAs.
                 7. For TikTok and Twitter:
                    - Complete the entire post—including hook, core takeaway from the original article, and relevant hashtags—strictly within 100 characters or fewer (less than or equal to 100 characters).
-                   - Keep it crisp, complete, and directly tied to the original article.
                 8. Separate each requested platform clearly using exact markdown headings:
                 ### LinkedIn
                 [content]
@@ -502,7 +512,7 @@ if st.button("Create Content", type="primary"):
                 payload = {
                     "model": "google/gemini-2.5-flash",
                     "messages": [{"role": "user", "content": prompt}],
-                    "max_tokens": 4000
+                    "max_tokens": 4500
                 }
 
                 api_response = requests.post(
@@ -537,18 +547,19 @@ if st.button("Create Content", type="primary"):
                         with tabs[i]:
                             plat_content = extract_platform_content(generated_output, plat)
                             if plat in ["TikTok", "Twitter"]:
-                                plat_content = enforce_short_platform_limit(plat_content, max_chars=100)
+                                plat_content = enforce_max_chars(plat_content, max_chars=100)
+                                char_limit = 100
                             else:
                                 plat_content = format_hook_first_line(plat_content)
+                                plat_content = enforce_max_chars(plat_content, max_chars=2500)
+                                char_limit = 2500
                             
                             with st.container(border=True):
                                 st.markdown(f"#### {plat} Post")
-                                if plat in ["TikTok", "Twitter"]:
-                                    st.caption(f"Character count: {len(plat_content)} / 100")
+                                st.caption(f"Character count: {len(plat_content)} / {char_limit}")
                                 st.divider()
                                 st.markdown(plat_content)
                             
-                            # Exact verbatim copy button + download + quick raw view
                             render_exact_copy_button(plat_content, f"{plat}_{i}_{random_seed}")
 
                             col_dl, col_cp = st.columns([1, 2])
