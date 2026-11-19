@@ -308,12 +308,40 @@ def extract_platform_content(full_text, platform_name):
     result = "\n".join(extracted).strip()
     return result if result else full_text
 
-# Enforce strict <= 100 char limit for TikTok and Twitter
+# Ensure first line is standalone hook/question, followed by newline before body
+def format_hook_first_line(text):
+    cleaned = text.strip()
+    if not cleaned:
+        return cleaned
+
+    lines = [ln.strip() for ln in cleaned.split("\n") if ln.strip()]
+    if len(lines) >= 2:
+        first_line = lines[0]
+        rest_body = "\n\n".join(lines[1:])
+        return f"{first_line}\n\n{rest_body}"
+
+    for sep in ["?", "!", "."]:
+        if sep in cleaned:
+            idx = cleaned.find(sep) + 1
+            hook = cleaned[:idx].strip()
+            body = cleaned[idx:].strip()
+            if hook and body:
+                return f"{hook}\n\n{body}"
+
+    return cleaned
+
+# Enforce strict <= 100 char limit for TikTok and Twitter while keeping complete thoughts
 def enforce_short_platform_limit(text, max_chars=100):
     cleaned = " ".join(text.split()).strip()
     if len(cleaned) <= max_chars:
         return cleaned
-    return cleaned[:max_chars].rstrip()
+
+    truncated = cleaned[:max_chars]
+    if " " in truncated:
+        candidate = truncated.rsplit(" ", 1)[0].strip()
+        if candidate:
+            return candidate
+    return truncated.strip()
 
 # Generation Trigger with button label "Create Content"
 if st.button("Create Content", type="primary"):
@@ -349,8 +377,8 @@ if st.button("Create Content", type="primary"):
                         "Use natural spoken cadence, clear guidance, real-world perspective, and warm authority while staying grounded in the source article."
                     ),
                     "Hook & Question Driven": (
-                        "Open with an arresting hook and a sharp question that pulls the reader into the full piece, "
-                        "followed by natural, human-sounding breakdown of the article's core points."
+                        "Open with a compelling question or hook on line 1 to pull the reader into the full piece, "
+                        "followed on a new line by a natural, human-sounding breakdown of the article's core points."
                     ),
                     "Professional & Empathetic": (
                         "Write with calm expertise and genuine empathy for everyday financial decisions, using clear human prose."
@@ -379,17 +407,19 @@ if st.button("Create Content", type="primary"):
 
                 MANDATORY RULES FOR EVERY RESPONSE:
                 1. ZERO EMOJIS anywhere in any platform's post. Never use emojis or pictographs.
-                2. EVERY post across ALL selected tones MUST open with a powerful hook (a strong opening line or question) that makes the reader want to read the entire post.
-                3. Sound 100% like a real human writer—natural phrasing, smooth transitions, zero robotic AI filler.
-                4. For LinkedIn, Facebook, and Instagram:
+                2. Line 1 MUST be a standalone hook or thought-provoking question based on the source article—challenging a common assumption or touching a real personal/financial decision without giving away the full answer on line 1.
+                3. Avoid generic yes/no questions like "Do you know..." or robotic openers like "In today's fast-paced world...". Make line 1 specific, sharp, and human.
+                4. Keep line 1 strictly by itself with NO body text on line 1, followed by a blank newline before the body starts on the next line.
+                5. Sound 100% like a real human writer—natural phrasing, smooth transitions, zero robotic AI filler.
+                6. For LinkedIn, Facebook, and Instagram:
                    - Keep the length substantial and rich like the original article—do NOT shrink it into a brief summary.
                    - Base the main body directly on the facts, ideas, and takeaways in the original article content above.
                    - Include important sub-topics, clear paragraphs, and clean bullet points covering key details from the article so the reader gets full value.
                    - End with relevant hashtags. Do NOT include URLs, links, or pushy sales CTAs.
-                5. For TikTok and Twitter:
-                   - The ENTIRE post including hashtags MUST be 100 characters or fewer (less than or equal to 100 characters).
-                   - Include a strong hook and relevant hashtags within that strict limit.
-                6. Separate each requested platform clearly using exact markdown headings:
+                7. For TikTok and Twitter:
+                   - Complete the entire post—including hook, core takeaway from the original article, and relevant hashtags—strictly within 100 characters or fewer (less than or equal to 100 characters).
+                   - Keep it crisp, complete, and directly tied to the original article.
+                8. Separate each requested platform clearly using exact markdown headings:
                 ### LinkedIn
                 [content]
                 ### Facebook
@@ -441,6 +471,8 @@ if st.button("Create Content", type="primary"):
                             plat_content = extract_platform_content(generated_output, plat)
                             if plat in ["TikTok", "Twitter"]:
                                 plat_content = enforce_short_platform_limit(plat_content, max_chars=100)
+                            else:
+                                plat_content = format_hook_first_line(plat_content)
                             
                             with st.container(border=True):
                                 st.markdown(f"#### {plat} Post")
